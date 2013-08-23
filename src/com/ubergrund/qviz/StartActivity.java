@@ -15,5 +15,6 @@ public class StartActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         startService(new Intent(this, QVizService.class));
+        finish();
     }
 }
