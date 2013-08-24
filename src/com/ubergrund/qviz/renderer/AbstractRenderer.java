@@ -31,6 +31,7 @@ public abstract class AbstractRenderer {
 
 
     abstract public void onFft(byte[] data, int sampleRate);
+    protected void onConnected(){}
 
     public AbstractRenderer(Context context) {
         this.context = context;
@@ -126,7 +127,7 @@ public abstract class AbstractRenderer {
             mLedService = ILedService.Stub.asInterface(iBinder);
             try {
                 leds = mLedService.getLedCount();
-//                magnitudePoints = new int[leds];
+                onConnected();
             } catch (RemoteException e) {
                 Log.e(TAG, "Error getting LED count", e);
                 leds = 0;

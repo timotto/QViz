@@ -42,7 +42,7 @@ public class QVizService extends Service {
             public void onFftDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
                 renderer.onFft(bytes, samplingRate);
             }
-        }, Visualizer.getMaxCaptureRate() / 4, true, true);
+        }, Visualizer.getMaxCaptureRate() / 2, true, true);
 
         renderer.start();
         mVisualizer.setEnabled(true);
