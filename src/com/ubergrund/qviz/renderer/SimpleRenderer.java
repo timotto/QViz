@@ -18,7 +18,10 @@ public class SimpleRenderer extends AbstractRenderer {
 
     private Timer timer = null;
 
-    private int magnitudePoints[] = null;
+    /**
+     * Contains the magnitude for each frequency
+     */
+    private float magnitudePoints[] = null;
 
     private float ledMags[] = null;
     private float ledMaxMags[] = null;
@@ -28,6 +31,8 @@ public class SimpleRenderer extends AbstractRenderer {
 
     private int indexOffset = 0;
     private int indexOffsetMod = 1;
+    private int indexOffsetRate = 1;
+    private int indexOffsetNext = 0;
 
     private int hueRange = 360;
     private int hueRangeMod = 0;
@@ -62,6 +67,10 @@ public class SimpleRenderer extends AbstractRenderer {
             timer.cancel();
     }
 
+    /**
+     * Rotating the hue means the colors representing specific
+     * frequencies are shifted over time.
+     */
     private final TimerTask changeHueMods = new TimerTask() {
         @Override
         public void run() {
@@ -78,6 +87,11 @@ public class SimpleRenderer extends AbstractRenderer {
         }
     };
 
+    /**
+     * This 10 second interval TimerTask randomly changes
+     * the speed and direction of the rotation. The actual
+     * rotation is done in the drawLEDsTask TimerTask.
+     */
     private final TimerTask changeOffsetMods = new TimerTask() {
         @Override
         public void run() {
@@ -102,47 +116,31 @@ public class SimpleRenderer extends AbstractRenderer {
         }
     };
 
+    /**
+     * This 20Hz TimerTask updates the LEDs. The FFT data is
+     * updated only at 10Hz, so this task also "fades down"
+     * the magnitudes after calculating the RGB value. This
+     * way the next iteration over the "same" data set yields
+     * a different result.
+     */
     private final TimerTask drawLEDsTask = new TimerTask() {
         @Override
         public void run() {
             if(!isConnected || leds==0 || magnitudePoints == null)
                 return;
 
-            final int numFreqs = magnitudePoints.length;
-            if (leds > numFreqs) {
-                return; // should not happen, or does it with low sampling frequencies?
-            }
-
-            final int magPointsPerLed = numFreqs / leds;
-            int i=0, led=0;
-
-            while (i< numFreqs) {
-                float mag = 0;
-//                for(int j=0;j<magPointsPerLed;j++)
-//                    mag += magnitudePoints[i + j];
-                    mag += magnitudePoints[i];
-
-                ledMags[led] = 0.6f * ledMags[led] + 0.4f * mag;
-
-                if (ledMags[led] >= ledMaxMags[led])
-                    ledMaxMags[led] = ledMags[led];
-                else ledMaxMags[led] = 0.7f * ledMaxMags[led] + 0.3f * ledMags[led];
-
-                if (ledMags[led] <= ledMinMags[led])
-                    ledMinMags[led] = ledMags[led];
-                else ledMinMags[led] = 0.9f * ledMinMags[led] + 0.1f * ledMags[led];
-
-                // make sure the delta is > 0
-                if(ledMaxMags[led]==ledMinMags[led])ledMaxMags[led]+=1;
-
-                led++;
-                i+=magPointsPerLed;
-            }
-
-            for(i=0;i<leds;i++) {
+            for(int i=0;i<leds;i++) {
                 int c,r,g,b;
                 final float h = (hueOffset + (hueRange * (float) i / (float) leds)) % 360;
-                final float v = (ledMags[i] - ledMinMags[i]) / (ledMaxMags[i] - ledMinMags[i]);
+                final float mag = ledMaxMags[i] - ledMinMags[i];
+                final float v;
+                if (mag>0)
+                    v = (ledMags[i] - ledMinMags[i]) / mag;
+                else {
+                    Log.w(TAG, "zero/neg mag!");
+                    v = 0;
+                }
+
                 c = Color.HSVToColor(new float[]{
                         h,
                         1f,
@@ -156,6 +154,8 @@ public class SimpleRenderer extends AbstractRenderer {
                 rgbs[3 * j] = r;
                 rgbs[3 * j + 1] = g;
                 rgbs[3 * j + 2] = b;
+
+                ledMags[i] *= 0.95f;
             }
 
             try {
@@ -164,27 +164,70 @@ public class SimpleRenderer extends AbstractRenderer {
                 Log.e(TAG, "Error setting LEDs", e);
             }
 
-            indexOffset += indexOffsetMod;
-            if (indexOffset < -leds)
-                indexOffset=0;
+            if (indexOffsetNext-- <= 0) {
+                indexOffset += indexOffsetMod;
+                if (indexOffset < -leds)
+                    indexOffset=0;
+
+                indexOffsetNext = indexOffsetRate;
+            }
         }
     };
 
+    /**
+     * Does some fancy math to calculate the magnitude for
+     * samples of interest only.
+     *
+     * This method is based on work by Felix Palmer:
+     * https://github.com/felixpalmer/android-visualizer
+     *
+     * @param data byte array of FFT data, see Visualizer.getFft for details
+     * @param sampleRate
+     */
     public void onFft(byte[] data, int sampleRate) {
 
         final int n = data.length/2;
         if (magnitudePoints == null || magnitudePoints.length != n)
-            magnitudePoints = new int[n];
+            magnitudePoints = new float[n];
 
-        double magnitude;
+        final int numFreqs = magnitudePoints.length;
+
+        // not every frequency in the result set is used
+        // last time I checked data[] was 1024 meaning 512 frequencies
+        // from ??? to ???
+        // but there are only n leds, so only every numFreqs frequency
+        // is actually used
+        final int magPointsPerLed = numFreqs / leds;
+        int led=0;
+
+        float magnitude;
         for (int i=0;i<n;i++) {
+            if (i % magPointsPerLed != 0)
+                continue;
+
             byte rfk = data[2 * i];
             byte ifk = data[2 * i + 1];
 
             magnitude = ((rfk * rfk + ifk * ifk));
             int dbValue = (int) (10 * Math.log10(magnitude));
             magnitude = Math.round(dbValue * 8);
-            magnitudePoints[i] = (int) (0.4f * magnitude + 0.6f * magnitudePoints[i]);
+
+            magnitudePoints[led] = 0.8f * magnitudePoints[led] + 0.2f * magnitude;
+            ledMags[led] = magnitudePoints[led];
+
+            if (ledMags[led] >= ledMaxMags[led])
+                ledMaxMags[led] = ledMags[led];
+            else ledMaxMags[led] = 0.7f * ledMaxMags[led] + 0.3f * ledMags[led];
+
+            if (ledMags[led] <= ledMinMags[led])
+                ledMinMags[led] = ledMags[led];
+            else ledMinMags[led] = 0.9f * ledMinMags[led] + 0.1f * ledMags[led];
+
+            // make sure the delta is > 0
+            if(ledMaxMags[led]==ledMinMags[led])ledMaxMags[led]+=1;
+
+            led++;
         }
+
     }
 }

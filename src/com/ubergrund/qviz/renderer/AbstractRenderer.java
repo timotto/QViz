@@ -31,6 +31,7 @@ public abstract class AbstractRenderer {
 
 
     abstract public void onFft(byte[] data, int sampleRate);
+
     protected void onConnected(){}
 
     public AbstractRenderer(Context context) {
@@ -141,5 +142,6 @@ public abstract class AbstractRenderer {
             mLedService = null;
         }
     };
+
 
 }
