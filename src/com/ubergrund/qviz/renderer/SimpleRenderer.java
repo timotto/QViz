@@ -23,6 +23,11 @@ public class SimpleRenderer extends AbstractRenderer {
     private int indexOffset = 0;
     private int indexOffsetMod = 1;
 
+    boolean active = false;
+
+    private int fftUsageOffset = 10;
+    private float maxMag = 0;
+
     public SimpleRenderer(Context context) {
         super(context);
     }
@@ -59,9 +64,7 @@ public class SimpleRenderer extends AbstractRenderer {
                         indexOffsetMod = 0;
                     break;
 
-                case 4:
-                case 5:
-                case 6:
+                default:
                     if (indexOffsetMod==0)
                         indexOffsetMod=1;
             }
@@ -75,24 +78,42 @@ public class SimpleRenderer extends AbstractRenderer {
                 return;
 
             try {
-                int maxMag = 0;
+                int currentMaxMag = 0;
                 for(int i=0;i<leds;i++) {
-                    maxMag = Math.max(maxMag, magnitudePoints[i]);
+                    currentMaxMag = Math.max(currentMaxMag, magnitudePoints[fftUsageOffset + i]);
                 }
-                if (maxMag<1)return;
+                if (currentMaxMag>maxMag)
+                    maxMag = currentMaxMag;
+                else
+                    maxMag = 0.5f * maxMag + 0.5f * currentMaxMag;
 
+                if (maxMag<1){
+                    if (active) {
+                        final int rgbs[] = new int[leds * 3];
+                        mLedService.setLedRange(mBinder, 0, leds, rgbs);
+                        active = false;
+                    }
+                    return;
+                }
+                active = true;
+
+                final int rgbs[] = new int[leds * 3];
                 for(int i=0;i<leds;i++) {
                     int c,r,g,b;
                     c = Color.HSVToColor(new float[]{
                             360f * (float)i / (float)leds,
                             1f,
-                            magnitudePoints[i] / (float)maxMag});
+                            magnitudePoints[fftUsageOffset + i] / maxMag});
 
                     r = (c >> 16) & 0xff;
                     g = (c >>  8) & 0xff;
                     b = c & 0xff;
-                    mLedService.setLed(mBinder, (i + indexOffset + leds) % leds, r, g, b);
+                    rgbs[3 * ((i + indexOffset + leds) % leds)] = r;
+                    rgbs[3 * ((i + indexOffset + leds) % leds) + 1] = g;
+                    rgbs[3 * ((i + indexOffset + leds) % leds) + 2] = b;
+//                    mLedService.setLed(mBinder, (i + indexOffset + leds) % leds, r, g, b);
                 }
+                mLedService.setLedRange(mBinder, 0, leds, rgbs);
             } catch (RemoteException e) {
                 Log.e(TAG, "Error setting LEDs", e);
 
@@ -117,20 +138,7 @@ public class SimpleRenderer extends AbstractRenderer {
             magnitude = ((rfk * rfk + ifk * ifk));
             int dbValue = (int) (10 * Math.log10(magnitude));
             magnitude = Math.round(dbValue * 8);
-            magnitudePoints[i] = (int) magnitude;
+            magnitudePoints[i] = (int) (0.4f * magnitude + 0.6f * magnitudePoints[i]);
         }
-
-//        final long now = System.currentTimeMillis();
-//        if (now < nextFftPrint)
-//            return;
-//
-//        nextFftPrint = now + 2000;
-//        final StringBuilder sb = new StringBuilder();
-//        sb.append(magnitudePoints[0]);
-//        for(int i=1;i<leds;i++) {
-//            sb.append(",");
-//            sb.append(magnitudePoints[i]);
-//        }
-//        Log.d(TAG, "onFftDataCapture("+data.length+", "+sampleRate+") = " + sb.toString());
     }
 }
